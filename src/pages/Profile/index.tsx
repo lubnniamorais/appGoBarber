@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Alert, ScrollView, TextInput } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
@@ -6,11 +6,16 @@ import Icon from 'react-native-vector-icons/Feather';
 
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 
+import { RFPercentage } from 'react-native-responsive-fontsize';
+
+import { Image } from 'react-native-compressor';
+
 import * as Yup from 'yup';
 
 import { Form } from '@unform/mobile';
 import { FormHandles } from '@unform/core';
 
+import axios, { AxiosError } from 'axios';
 import api from '../../services/api';
 import getValidationErrors from '../../utils/getValidationErrors';
 import { useAuth } from '../../hooks/auth';
@@ -26,6 +31,9 @@ import {
   UserAvatar,
   Title,
 } from './styles';
+import { noImage } from '../../utils/Utils';
+import { ChooseTakePhotoModal } from '../../components/ChooseTakePhotoModal';
+import { LoadingModal } from '../../components/LoadingModal';
 
 interface ProfileFormData {
   name: string;
@@ -46,6 +54,13 @@ const Profile: React.FC = () => {
   const oldPasswordInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const confirmPasswordInputRef = useRef<TextInput>(null);
+
+  const [isOpenTakePhotoModal, setIsOpenTakePhotoModal] = useState(false);
+  const [isLoadingModal, setIsLoadingModal] = useState(false);
+
+  const toggleOpenTakePhotoModal = useCallback(() => {
+    setIsOpenTakePhotoModal(oldState => !oldState);
+  }, []);
 
   const handleSignUp = useCallback(
     async (data: ProfileFormData) => {
@@ -120,26 +135,28 @@ const Profile: React.FC = () => {
     navigation.goBack();
   }, [navigation]);
 
-  const handleUpdateAvatar = useCallback(() => {
-    launchImageLibrary(
+  const handleTakePhotoCamera = useCallback(async () => {
+    launchCamera(
       {
         mediaType: 'photo',
         quality: 1,
-        selectionLimit: 1,
+        cameraType: 'back',
       },
-      response => {
+      async response => {
         if (response.didCancel) {
           return;
         }
-
         if (response.errorCode === 'permission') {
           Alert.alert('GoBarber', 'Permissão para acesso a galeria necessária');
           return;
         }
-
         if (response.assets) {
           if (response.assets[0].uri) {
+            toggleOpenTakePhotoModal();
+
             try {
+              setIsLoadingModal(true);
+
               const responseImage = await Image.compress(
                 response.assets[0].uri,
                 {
@@ -149,30 +166,106 @@ const Profile: React.FC = () => {
                 },
               );
 
-              const data = new FormData();
+              const formData = new FormData();
 
-              data.append('avatar', {
+              formData.append('avatar', {
+                name: `${user.id}.jpg`, // CPF ca be unique information.
                 type: 'image/*',
-                name: `${user.id}.jpg`,
-                uri: response.assets[0]?.uri,
+                uri: responseImage,
               });
 
-              api
-                .patch('/users/avatar', data, {
-                  headers: { 'Content-Type': 'multipart/form-data' },
-                  transformRequest: data => data,
-                })
-                .then(apiResponse => {
-                  updateUser(apiResponse.data);
-                });
+              const responseApi = await api.patch('/users/avatar', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                transformRequest: data => data,
+              });
+
+              if (responseApi.status === 200) {
+                const customerData = responseApi.data;
+                updateUser(customerData);
+                setIsLoadingModal(false);
+              }
             } catch (err) {
-              console.log(err);
+              if (axios.isAxiosError(err)) {
+                const errorAxios = err as AxiosError;
+                if (errorAxios.response) {
+                  Alert.alert('GoBarber', 'Não foi possível atualizar a foto!');
+                }
+              } else {
+                setIsLoadingModal(false);
+                Alert.alert('GoBarber', 'Não foi possível atualizar a foto!');
+              }
             }
           }
         }
       },
     );
-  }, [updateUser, user.id]);
+  }, [toggleOpenTakePhotoModal, updateUser, user.id]);
+
+  const handleTakePhotoGallery = useCallback(async () => {
+    launchImageLibrary(
+      {
+        mediaType: 'photo',
+        quality: 1,
+        selectionLimit: 1,
+      },
+      async response => {
+        if (response.didCancel) {
+          return;
+        }
+        if (response.errorCode === 'permission') {
+          Alert.alert('GoBarber', 'Permissão para acesso a galeria necessária');
+          return;
+        }
+        if (response.assets) {
+          if (response.assets[0].uri) {
+            toggleOpenTakePhotoModal();
+
+            try {
+              setIsLoadingModal(true);
+
+              const responseImage = await Image.compress(
+                response.assets[0].uri,
+                {
+                  maxWidth: RFPercentage(100),
+                  quality: 0.8,
+                  output: 'jpg',
+                },
+              );
+
+              const formData = new FormData();
+
+              formData.append('avatar', {
+                name: `${user.id}.jpg`, // CPF ca be unique information.
+                type: 'image/*',
+                uri: responseImage,
+              });
+
+              const responseApi = await api.patch('/users/avatar', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                transformRequest: data => data,
+              });
+
+              if (responseApi.status === 200) {
+                const customerData = responseApi.data;
+                updateUser(customerData);
+                setIsLoadingModal(false);
+              }
+            } catch (err) {
+              if (axios.isAxiosError(err)) {
+                const errorAxios = err as AxiosError;
+                if (errorAxios.response) {
+                  Alert.alert('GoBarber', 'Não foi possível atualizar a foto!');
+                }
+              } else {
+                setIsLoadingModal(false);
+                Alert.alert('GoBarber', 'Não foi possível atualizar a foto!');
+              }
+            }
+          }
+        }
+      },
+    );
+  }, [toggleOpenTakePhotoModal, updateUser, user.id]);
 
   return (
     // <KeyboardAvoidingView
@@ -189,10 +282,19 @@ const Profile: React.FC = () => {
         showsVerticalScrollIndicator={false}
       >
         <Content>
-          <UserAvatarButton onPress={handleUpdateAvatar}>
-            <UserAvatar source={{ uri: user.avatar_url }} />
-          </UserAvatarButton>
-
+          {user ? (
+            <UserAvatarButton onPress={toggleOpenTakePhotoModal}>
+              <UserAvatar
+                source={{
+                  uri: user.avatar_url ? user.avatar_url : noImage(user.name),
+                }}
+              />
+            </UserAvatarButton>
+          ) : (
+            <UserAvatarButton>
+              <Icon name="user" size={30} color="#fff" />
+            </UserAvatarButton>
+          )}
           <Title>Meu perfil</Title>
 
           <Form
@@ -274,6 +376,15 @@ const Profile: React.FC = () => {
           </Button>
         </Content>
       </ScrollView>
+
+      {/* MODALS */}
+      <ChooseTakePhotoModal
+        isOpenModal={isOpenTakePhotoModal}
+        handleCloseModal={toggleOpenTakePhotoModal}
+        handleTakePhotoCamera={handleTakePhotoCamera}
+        handleTakePhotoGallery={handleTakePhotoGallery}
+      />
+      <LoadingModal modalVisible={isLoadingModal} />
     </Container>
     // </KeyboardAvoidingView>
   );
