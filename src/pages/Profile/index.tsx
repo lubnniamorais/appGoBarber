@@ -4,6 +4,8 @@ import { useNavigation } from '@react-navigation/native';
 
 import Icon from 'react-native-vector-icons/Feather';
 
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+
 import * as Yup from 'yup';
 
 import { Form } from '@unform/mobile';
@@ -118,6 +120,60 @@ const Profile: React.FC = () => {
     navigation.goBack();
   }, [navigation]);
 
+  const handleUpdateAvatar = useCallback(() => {
+    launchImageLibrary(
+      {
+        mediaType: 'photo',
+        quality: 1,
+        selectionLimit: 1,
+      },
+      response => {
+        if (response.didCancel) {
+          return;
+        }
+
+        if (response.errorCode === 'permission') {
+          Alert.alert('GoBarber', 'Permissão para acesso a galeria necessária');
+          return;
+        }
+
+        if (response.assets) {
+          if (response.assets[0].uri) {
+            try {
+              const responseImage = await Image.compress(
+                response.assets[0].uri,
+                {
+                  maxWidth: RFPercentage(100),
+                  quality: 0.8,
+                  output: 'jpg',
+                },
+              );
+
+              const data = new FormData();
+
+              data.append('avatar', {
+                type: 'image/*',
+                name: `${user.id}.jpg`,
+                uri: response.assets[0]?.uri,
+              });
+
+              api
+                .patch('/users/avatar', data, {
+                  headers: { 'Content-Type': 'multipart/form-data' },
+                  transformRequest: data => data,
+                })
+                .then(apiResponse => {
+                  updateUser(apiResponse.data);
+                });
+            } catch (err) {
+              console.log(err);
+            }
+          }
+        }
+      },
+    );
+  }, [updateUser, user.id]);
+
   return (
     // <KeyboardAvoidingView
     //   style={{ flex: 1 }}
@@ -133,7 +189,7 @@ const Profile: React.FC = () => {
         showsVerticalScrollIndicator={false}
       >
         <Content>
-          <UserAvatarButton onPress={() => {}}>
+          <UserAvatarButton onPress={handleUpdateAvatar}>
             <UserAvatar source={{ uri: user.avatar_url }} />
           </UserAvatarButton>
 
